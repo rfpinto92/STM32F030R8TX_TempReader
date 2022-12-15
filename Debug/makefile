@@ -9,11 +9,7 @@ RM := rm -rf
 
 # All of the sources participating in the build are defined here
 -include sources.mk
--include Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang/subdir.mk
--include Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM3/subdir.mk
--include Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS/subdir.mk
--include Middlewares/Third_Party/FreeRTOS/Source/subdir.mk
--include Drivers/STM32F1xx_HAL_Driver/Src/subdir.mk
+-include Drivers/STM32F0xx_HAL_Driver/Src/subdir.mk
 -include Core/Startup/subdir.mk
 -include Core/Src/subdir.mk
 -include objects.mk
@@ -53,34 +49,34 @@ $(wildcard ../makefile.init) \
 $(wildcard ../makefile.targets) \
 
 
-BUILD_ARTIFACT_NAME := Temp_Controller
+BUILD_ARTIFACT_NAME := LerTemperatura
 BUILD_ARTIFACT_EXTENSION := elf
 BUILD_ARTIFACT_PREFIX :=
 BUILD_ARTIFACT := $(BUILD_ARTIFACT_PREFIX)$(BUILD_ARTIFACT_NAME)$(if $(BUILD_ARTIFACT_EXTENSION),.$(BUILD_ARTIFACT_EXTENSION),)
 
 # Add inputs and outputs from these tool invocations to the build variables 
 EXECUTABLES += \
-Temp_Controller.elf \
+LerTemperatura.elf \
 
 MAP_FILES += \
-Temp_Controller.map \
+LerTemperatura.map \
 
 SIZE_OUTPUT += \
 default.size.stdout \
 
 OBJDUMP_LIST += \
-Temp_Controller.list \
+LerTemperatura.list \
 
 
 # All Target
 all: main-build
 
 # Main-build Target
-main-build: Temp_Controller.elf secondary-outputs
+main-build: LerTemperatura.elf secondary-outputs
 
 # Tool invocations
-Temp_Controller.elf Temp_Controller.map: $(OBJS) $(USER_OBJS) C:\STM32_WorkSpace\Temp_Controller\STM32F103C8TX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-g++ -o "Temp_Controller.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m3 -T"C:\STM32_WorkSpace\Temp_Controller\STM32F103C8TX_FLASH.ld" --specs=nosys.specs -Wl,-Map="Temp_Controller.map" -Wl,--gc-sections -static --specs=nano.specs -mfloat-abi=soft -mthumb -Wl,--start-group -lc -lm -lstdc++ -lsupc++ -Wl,--end-group
+LerTemperatura.elf LerTemperatura.map: $(OBJS) $(USER_OBJS) C:\STM32_WorkSpace\LerTemperatura\STM32F030R8TX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-g++ -o "LerTemperatura.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m0 -T"C:\STM32_WorkSpace\LerTemperatura\STM32F030R8TX_FLASH.ld" --specs=nosys.specs -Wl,-Map="LerTemperatura.map" -Wl,--gc-sections -static --specs=nano.specs -mfloat-abi=soft -mthumb -Wl,--start-group -lc -lm -lstdc++ -lsupc++ -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
@@ -89,14 +85,14 @@ default.size.stdout: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
 	@echo 'Finished building: $@'
 	@echo ' '
 
-Temp_Controller.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-objdump -h -S $(EXECUTABLES) > "Temp_Controller.list"
+LerTemperatura.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-objdump -h -S $(EXECUTABLES) > "LerTemperatura.list"
 	@echo 'Finished building: $@'
 	@echo ' '
 
 # Other Targets
 clean:
-	-$(RM) Temp_Controller.elf Temp_Controller.list Temp_Controller.map default.size.stdout
+	-$(RM) LerTemperatura.elf LerTemperatura.list LerTemperatura.map default.size.stdout
 	-@echo ' '
 
 secondary-outputs: $(SIZE_OUTPUT) $(OBJDUMP_LIST)

@@ -18,10 +18,12 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "ssd1306.h"
+#include "fonts.h"
+
 
 /* USER CODE END Includes */
 
@@ -42,24 +44,38 @@
 /* Private variables ---------------------------------------------------------*/
 I2C_HandleTypeDef hi2c1;
 
-osThreadId defaultTaskHandle;
-osThreadId ReadTempTaskHandle;
-osThreadId UpdateLCDTaskHandle;
+TIM_HandleTypeDef htim3;
+
 /* USER CODE BEGIN PV */
 
-static const uint8_tn AHT10_Address=0x38 << 1; //Use 8-bit address
-static const uint8_tn AHT10_InitComand_0=0xE1 << 1; //Use 8-bit address
-static const uint8_tn AHT10_InitComand_1=0x08 << 1; //Use 8-bit address
-static const uint8_tn AHT10_InitComand_2=0x00 << 1; //Use 8-bit address
+/* Variables For AHT10*/
 
-static const uint8_tn AHT10_ReadTempComand_0=0xAC << 1; //Use 8-bit address
-static const uint8_tn AHT10_ReadTempComand_1=0x33 << 1; //Use 8-bit address
-static const uint8_tn AHT10_ReadTempComand_2=0x00 << 1; //Use 8-bit address
+uint8_t AHT10_RX_Data[6];
+uint32_t AHT10_ADC_Raw;
+float AHT10_Temperature;
+float AHT10_Humidity;
+char TempText[4];
+char Title[10];
 
-HAL_StatusTypeDef AHT10_I2cStatus;
 
-uint8_t buf[12]; // Buffer
-uint32_t d;
+#define AHT10_ADRESS (0x38<<1)
+
+
+uint8_t AHT10_InitComand=0xE1;
+uint8_t AHT10_SoftResetComand=0xBA;
+
+uint8_t AHT10_TmpHumdComand=0xAC;
+
+
+//uint8_t AHT10_TmpHumdComand[3]={0xAC,0X33,0X00};
+
+/*Aditional Variables*/
+uint8_t AHT10_Switcher=255;
+uint8_t T_100ms=255;
+uint8_t SendToLCD=0;
+
+
+
 
 /* USER CODE END PV */
 
@@ -67,16 +83,20 @@ uint32_t d;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_I2C1_Init(void);
-void StartDefaultTask(void const * argument);
-void StartTask02(void const * argument);
-void StartTask03(void const * argument);
-
+static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
-u_int8_t init_AHT10(void);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+void  HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+	if (htim->Instance==TIM3) {
+		T_100ms=255;
+	}
+}
 
 /* USER CODE END 0 */
 
@@ -109,52 +129,82 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_I2C1_Init();
+  MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
+  HAL_TIM_Base_Start_IT(&htim3);
 
-  init_AHT10();
+  SSD1306_Init (); // initialize the display
+
+ HAL_I2C_Master_Transmit(&hi2c1, AHT10_ADRESS, &AHT10_InitComand,1,1000);
+ HAL_Delay(100);
+ HAL_I2C_Master_Transmit(&hi2c1, AHT10_ADRESS, &AHT10_SoftResetComand,1,1000);
+ HAL_Delay(100);
+
   /* USER CODE END 2 */
 
-  /* USER CODE BEGIN RTOS_MUTEX */
-  /* add mutexes, ... */
-  /* USER CODE END RTOS_MUTEX */
-
-  /* USER CODE BEGIN RTOS_SEMAPHORES */
-  /* add semaphores, ... */
-  /* USER CODE END RTOS_SEMAPHORES */
-
-  /* USER CODE BEGIN RTOS_TIMERS */
-  /* start timers, add new ones, ... */
-  /* USER CODE END RTOS_TIMERS */
-
-  /* USER CODE BEGIN RTOS_QUEUES */
-  /* add queues, ... */
-  /* USER CODE END RTOS_QUEUES */
-
-  /* Create the thread(s) */
-  /* definition and creation of defaultTask */
-  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128);
-  defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
-
-  /* definition and creation of ReadTempTask */
-  osThreadDef(ReadTempTask, StartTask02, osPriorityBelowNormal, 0, 128);
-  ReadTempTaskHandle = osThreadCreate(osThread(ReadTempTask), NULL);
-
-  /* definition and creation of UpdateLCDTask */
-  osThreadDef(UpdateLCDTask, StartTask03, osPriorityBelowNormal, 0, 128);
-  UpdateLCDTaskHandle = osThreadCreate(osThread(UpdateLCDTask), NULL);
-
-  /* USER CODE BEGIN RTOS_THREADS */
-  /* add threads, ... */
-  /* USER CODE END RTOS_THREADS */
-
-  /* Start scheduler */
-  osKernelStart();
-
-  /* We should never get here as control is now taken by the scheduler */
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+
+	  if (T_100ms) {
+		if (AHT10_Switcher)
+		{
+			HAL_I2C_Master_Transmit_IT(&hi2c1, AHT10_ADRESS, &AHT10_TmpHumdComand,1);
+		}
+		else
+		{
+
+			HAL_I2C_Master_Receive_IT(&hi2c1, AHT10_ADRESS, (uint8_t*)AHT10_RX_Data, 6);
+
+			if (~AHT10_RX_Data[0]& 0X80)
+			{
+				/* Convert to Temperature in °C */
+				AHT10_ADC_Raw = (((uint32_t)AHT10_RX_Data[3] & 15) << 16) | ((uint32_t)AHT10_RX_Data[4] << 8) | AHT10_RX_Data[5];
+				AHT10_Temperature = (float)(AHT10_ADC_Raw * 200.00 / 1048576.00) - 50.00;
+				/* Convert to Relative Humidity in % */
+				AHT10_ADC_Raw = ((uint32_t)AHT10_RX_Data[1] << 12) | ((uint32_t)AHT10_RX_Data[2] << 4) | (AHT10_RX_Data[3] >> 4);
+				AHT10_Humidity = (float)(AHT10_ADC_Raw*100.00/1048576.00);
+				SendToLCD=1;
+			}
+
+
+		}
+
+		AHT10_Switcher = ~AHT10_Switcher; /* Invert */
+		T_100ms = 0; /* Nulify */
+	  }
+
+
+if (SendToLCD==1) {
+
+
+	sprintf(Title,"Temp:");
+
+	SSD1306_GotoXY (0,0); // goto 10, 10
+	SSD1306_Puts ((char*)Title, &Font_7x10, 1);
+
+	sprintf(TempText,"%d.%01u", (int) AHT10_Temperature, (int) ((AHT10_Temperature - (int) AHT10_Temperature ) * 100) );
+	SSD1306_GotoXY (10,10); // goto 10, 10
+	SSD1306_Puts ((char*)TempText, &Font_11x18, 1);
+
+	sprintf(Title,"Hum:");
+
+	SSD1306_GotoXY (0,30); // goto 10, 10
+	SSD1306_Puts ((char*)Title, &Font_7x10, 1);
+
+
+	sprintf(TempText,"%d.%01u", (int) AHT10_Humidity, (int) ((AHT10_Humidity - (int) AHT10_Humidity ) * 100) );
+	SSD1306_GotoXY (10, 40);
+	SSD1306_Puts ((char*)TempText, &Font_11x18, 1);
+	SSD1306_UpdateScreen(); // update screen
+
+	HAL_Delay(1000);
+	SendToLCD=0;
+}
+
+
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -170,6 +220,7 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
@@ -186,13 +237,18 @@ void SystemClock_Config(void)
   /** Initializes the CPU, AHB and APB buses clocks
   */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
-                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+                              |RCC_CLOCKTYPE_PCLK1;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_I2C1;
+  PeriphClkInit.I2c1ClockSelection = RCC_I2C1CLKSOURCE_HSI;
+  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
   }
@@ -214,15 +270,29 @@ static void MX_I2C1_Init(void)
 
   /* USER CODE END I2C1_Init 1 */
   hi2c1.Instance = I2C1;
-  hi2c1.Init.ClockSpeed = 100000;
-  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
-  hi2c1.Init.OwnAddress1 = 6;
+  hi2c1.Init.Timing = 0x0000020B;
+  hi2c1.Init.OwnAddress1 = 0;
   hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
-  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_ENABLE;
-  hi2c1.Init.OwnAddress2 = 20;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.OwnAddress2Masks = I2C_OA2_NOMASK;
   hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
   hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
   if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Analogue filter
+  */
+  if (HAL_I2CEx_ConfigAnalogFilter(&hi2c1, I2C_ANALOGFILTER_ENABLE) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Digital filter
+  */
+  if (HAL_I2CEx_ConfigDigitalFilter(&hi2c1, 0) != HAL_OK)
   {
     Error_Handler();
   }
@@ -233,142 +303,67 @@ static void MX_I2C1_Init(void)
 }
 
 /**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM3_Init(void)
+{
+
+  /* USER CODE BEGIN TIM3_Init 0 */
+
+  /* USER CODE END TIM3_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM3_Init 1 */
+
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 800-1;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 1000-1;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
+
+  /* USER CODE END TIM3_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
   */
 static void MX_GPIO_Init(void)
 {
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin : PA7 */
-  GPIO_InitStruct.Pin = GPIO_PIN_7;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
 }
 
 /* USER CODE BEGIN 4 */
 
-
-/**
- * @brief: Init the AHT10 Sensor
- * @param: none
- *
- * @return:
- * 		0 - Sensor initializated
- * 		1 - Error
- */
-u_int8_t init_AHT10(void){
-
-	buf[0]=AHT10_InitComand_0;
-	buf[1]=AHT10_InitComand_1;
-	buf[2]=AHT10_InitComand_2;
-
-	//Send Comand to Init Sensors
-	AHT10_I2cStatus = HAL_I2C_Master_Transmit(&hi2c1, AHT10_Address, buf, 3, HAL_MAX_DELAY);
-
-	if(AHT10_I2cStatus!=HAL_OK)
-	{
-		return 1;
-	}
-return 0;
-}
-
-
-uint8_t ReadTemperature_AHT10(float* temp, float* humi)
-{
-
-	buf[0]=AHT10_ReadTempComand_0;
-	buf[1]=AHT10_ReadTempComand_1;
-	buf[2]=AHT10_ReadTempComand_2;
-	//Send Comand to read temperature
-	AHT10_I2cStatus = HAL_I2C_Master_Transmit(&hi2c1, AHT10_Address, buf, 3, HAL_MAX_DELAY);
-
-	if(AHT10_I2cStatus!=HAL_OK)
-	{
-		return 1;
-	}
-
-	HAL_Delay(75); //DELAY nedded, says datasheet
-
-	AHT10_I2cStatus = HAL_I2C_Master_Receive(&hi2c1, AHT10_Address, buf, 6, HAL_MAX_DELAY);
-
-	d=((uint32_t)(buf[3]&0x0F)<<16)|((uint32_t)buf[4]<<8)|buf[5];
-	*temp=d*200/1048576-50;
-
-	d=((uint32_t)buf[1]<<12)|((uint32_t)buf[2]<<4)|(buf[3]>>4);
-	*humi=d*100/1048576;
-
-	return 0;
-}
-
 /* USER CODE END 4 */
-
-/* USER CODE BEGIN Header_StartDefaultTask */
-/**
-  * @brief  Function implementing the defaultTask thread.
-  * @param  argument: Not used
-  * @retval None
-  */
-/* USER CODE END Header_StartDefaultTask */
-void StartDefaultTask(void const * argument)
-{
-  /* USER CODE BEGIN 5 */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
-  /* USER CODE END 5 */
-}
-
-/* USER CODE BEGIN Header_StartTask02 */
-/**
-* @brief Function implementing the ReadTempTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_StartTask02 */
-void StartTask02(void const * argument)
-{
-  /* USER CODE BEGIN StartTask02 */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
-  /* USER CODE END StartTask02 */
-}
-
-/* USER CODE BEGIN Header_StartTask03 */
-/**
-* @brief Function implementing the UpdateLCDTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_StartTask03 */
-void StartTask03(void const * argument)
-{
-  /* USER CODE BEGIN StartTask03 */
-
-
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
-  /* USER CODE END StartTask03 */
-}
 
 /**
   * @brief  This function is executed in case of error occurrence.
